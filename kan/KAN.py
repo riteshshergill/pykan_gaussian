@@ -135,10 +135,13 @@ class KAN(nn.Module):
         self.width = width
 
         for l in range(self.depth):
-            # splines
+            # gaussians
+            mu = torch.linspace(-1, 1, steps=grid + 1).repeat(width[l] * width[l + 1], 1).to(device)
+            sigma = torch.ones(width[l] * width[l + 1], grid + 1).to(device) * noise_scale
+            
             scale_base = 1 / np.sqrt(width[l]) + (torch.randn(width[l] * width[l + 1], ) * 2 - 1) * noise_scale_base
             sp_batch = KANLayer(in_dim=width[l], out_dim=width[l + 1], num=grid, k=k, noise_scale=noise_scale, scale_base=scale_base, scale_sp=1., base_fun=base_fun, grid_eps=grid_eps, grid_range=grid_range, sp_trainable=sp_trainable,
-                                sb_trainable=sb_trainable, device=device)
+                                sb_trainable=sb_trainable, device=device, mu=mu, sigma=sigma)
             self.act_fun.append(sp_batch)
 
             # bias
@@ -200,9 +203,11 @@ class KAN(nn.Module):
             spb_parent = another_model.act_fun[l]
 
             # spb = spb_parent
-            preacts = another_model.spline_preacts[l]
-            postsplines = another_model.spline_postsplines[l]
-            self.act_fun[l].coef.data = curve2coef(preacts.reshape(batch, spb.size).permute(1, 0), postsplines.reshape(batch, spb.size).permute(1, 0), spb.grid, k=spb.k, device=self.device)
+            preacts = another_model.gaussian_preacts[l]
+            postgaussians = another_model.gaussian_postgaussians[l]
+            mu = spb.grid
+            sigma = torch.ones_like(mu) * spb.noise_scale
+            self.act_fun[l].coef.data = gaussian2coef(preacts.reshape(batch, spb.size).permute(1, 0), postgaussians.reshape(batch, spb.size).permute(1, 0), mu, sigma, device=self.device)
             spb.scale_base.data = spb_parent.scale_base.data
             spb.scale_sp.data = spb_parent.scale_sp.data
             spb.mask.data = spb_parent.mask.data
@@ -297,18 +302,17 @@ class KAN(nn.Module):
         '''
 
         self.acts = []  # shape ([batch, n0], [batch, n1], ..., [batch, n_L])
-        self.spline_preacts = []
-        self.spline_postsplines = []
-        self.spline_postacts = []
+        self.gaussian_preacts = []
+        self.gaussian_postgaussians = []
+        self.gaussian_postacts = []
         self.acts_scale = []
         self.acts_scale_std = []
-        # self.neurons_scale = []
 
-        self.acts.append(x)  # acts shape: (batch, width[l])
+        self.acts.append(x)
 
         for l in range(self.depth):
 
-            x_numerical, preacts, postacts_numerical, postspline = self.act_fun[l](x)
+            x_numerical, preacts, postacts_numerical, postgaussian = self.act_fun[l](x)
 
             if self.symbolic_enabled == True:
                 x_symbolic, postacts_symbolic = self.symbolic_fun[l](x)
@@ -319,15 +323,14 @@ class KAN(nn.Module):
             x = x_numerical + x_symbolic
             postacts = postacts_numerical + postacts_symbolic
 
-            # self.neurons_scale.append(torch.mean(torch.abs(x), dim=0))
             grid_reshape = self.act_fun[l].grid.reshape(self.width[l + 1], self.width[l], -1)
             input_range = grid_reshape[:, :, -1] - grid_reshape[:, :, 0] + 1e-4
             output_range = torch.mean(torch.abs(postacts), dim=0)
             self.acts_scale.append(output_range / input_range)
             self.acts_scale_std.append(torch.std(postacts, dim=0))
-            self.spline_preacts.append(preacts.detach())
-            self.spline_postacts.append(postacts.detach())
-            self.spline_postsplines.append(postspline.detach())
+            self.gaussian_preacts.append(preacts.detach())
+            self.gaussian_postacts.append(postacts.detach())
+            self.gaussian_postgaussians.append(postgaussian.detach())
 
             x = x + self.biases[l].weight
             self.acts.append(x)
@@ -437,7 +440,7 @@ class KAN(nn.Module):
             return None
         else:
             x = self.acts[l][:, i]
-            y = self.spline_postacts[l][:, j, i]
+            y = self.gaussian_postacts[l][:, j, i]
             r2 = self.symbolic_fun[l].fix_symbolic(i, j, fun_name, x, y, a_range=a_range, b_range=b_range, verbose=verbose)
             return r2
 
@@ -547,8 +550,8 @@ class KAN(nn.Module):
         y range: [-0.50 , 1.83 ]
         (tensor(-2.1288), tensor(2.7498), tensor(-0.5042), tensor(1.8275))
         '''
-        x = self.spline_preacts[l][:, j, i]
-        y = self.spline_postacts[l][:, j, i]
+        x = self.gaussian_preacts[l][:, j, i]
+        y = self.gaussian_postacts[l][:, j, i]
         x_min = torch.min(x)
         x_max = torch.max(x)
         y_min = torch.min(y)
@@ -637,9 +640,10 @@ class KAN(nn.Module):
                     plt.gca().patch.set_linewidth(1.5)
                     # plt.axis('off')
 
-                    plt.plot(self.acts[l][:, i][rank].cpu().detach().numpy(), self.spline_postacts[l][:, j, i][rank].cpu().detach().numpy(), color=color, lw=5)
+                    #plt.plot(self.acts[l][:, i][rank].cpu().detach().numpy(), self.spline_postacts[l][:, j, i][rank].cpu().detach().numpy(), color=color, lw=5)
+                    plt.plot(self.acts[l][:, i][rank].cpu().detach().numpy(), self.gaussian_postacts[l][:, j, i][rank].cpu().detach().numpy(), color=color, lw=5)
                     if sample == True:
-                        plt.scatter(self.acts[l][:, i][rank].cpu().detach().numpy(), self.spline_postacts[l][:, j, i][rank].cpu().detach().numpy(), color=color, s=400 * scale ** 2)
+                        plt.scatter(self.acts[l][:, i][rank].cpu().detach().numpy(), self.gaussian_postacts[l][:, j, i][rank].cpu().detach().numpy(), color=color, s=400 * scale ** 2)
                     plt.gca().spines[:].set_color(color)
 
                     lock_id = self.act_fun[l].lock_id[j * self.width[l] + i].long().item()
