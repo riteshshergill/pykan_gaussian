@@ -74,12 +74,6 @@ def coef2gaussian(x_eval, coef, mu, sigma, device="cpu"):
     
     # Evaluate Gaussian bases using G_batch
     gaussians = G_batch(x_eval, mu, sigma, device=device)
-
-    print(f"x_eval shape: {x_eval.shape}")
-    print(f"coef shape: {coef.shape}")
-    print(f"mu shape: {mu.shape}")
-    print(f"sigma shape: {sigma.shape}")
-    print(f"gaussians shape: {gaussians.shape}")
     
     # Sum over coefficients to get the evaluated values
     y_eval = (coef.unsqueeze(2) * gaussians).sum(dim=1)

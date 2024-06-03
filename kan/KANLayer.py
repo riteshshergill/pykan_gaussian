@@ -315,10 +315,8 @@ class KANLayer(nn.Module):
         # Initialize Gaussian parameters (mu and sigma)
         mu = torch.linspace(-1, 1, steps=spb.num + 1).repeat(spb.size, 1).to(self.device)
         sigma = torch.ones(spb.size, spb.num + 1).to(self.device) * 0.1  # Adjust sigma as needed
-        
-        # Adjust Gaussian parameters according to the subset
-        spb.mu = mu.reshape(self.out_dim, self.in_dim, spb.num + 1)[out_id][:, in_id].reshape(-1, spb.num + 1)
-        spb.sigma = sigma.reshape(self.out_dim, self.in_dim, spb.num + 1)[out_id][:, in_id].reshape(-1, spb.num + 1)
+        spb.mu = torch.nn.Parameter(mu.reshape(self.out_dim, self.in_dim, spb.num + 1)[out_id][:, in_id].reshape(-1, spb.num + 1))
+        spb.sigma = torch.nn.Parameter(sigma.reshape(self.out_dim, self.in_dim, spb.num + 1)[out_id][:, in_id].reshape(-1, spb.num + 1))
         
         spb.scale_base.data = self.scale_base.reshape(self.out_dim, self.in_dim)[out_id][:, in_id].reshape(-1, )
         spb.scale_sp.data = self.scale_sp.reshape(self.out_dim, self.in_dim)[out_id][:, in_id].reshape(-1, )

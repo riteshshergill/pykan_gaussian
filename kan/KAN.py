@@ -727,7 +727,7 @@ class KAN(nn.Module):
 
         plt.axis('off')
 
-        # plot splines
+        # plot gaussian
         for l in range(neuron_depth - 1):
             n = width[l]
             for i in range(n):
@@ -836,7 +836,7 @@ class KAN(nn.Module):
                 entropy = - torch.sum(p * torch.log2(p + 1e-4))
                 reg_ += lamb_l1 * l1 + lamb_entropy * entropy  # both l1 and entropy
 
-            # regularize coefficient to encourage spline to be zero
+            # regularize coefficient to encourage gaussian to be zero
             for i in range(len(self.act_fun)):
                 coeff_l1 = torch.sum(torch.mean(torch.abs(self.act_fun[i].coef), dim=1))
                 coeff_diff_l1 = torch.sum(torch.mean(torch.abs(torch.diff(self.act_fun[i].coef)), dim=1))
@@ -862,6 +862,8 @@ class KAN(nn.Module):
         results['train_loss'] = []
         results['test_loss'] = []
         results['reg'] = []
+        results['train_accuracy'] = []
+        results['test_accuracy'] = []
         if metrics != None:
             for i in range(len(metrics)):
                 results[metrics[i].__name__] = []
@@ -919,8 +921,25 @@ class KAN(nn.Module):
 
             test_loss = loss_fn_eval(self.forward(dataset['test_input'][test_id].to(device)), dataset['test_label'][test_id].to(device))
 
+            with torch.no_grad():
+                train_pred = (self.forward(dataset['train_input'].to(device)) >= 0.5).float()
+                train_true = dataset['train_label'].to(device)
+                train_accuracy = (train_pred == train_true).float().mean().cpu().detach().numpy()
+
+                test_pred = (self.forward(dataset['test_input'].to(device)) >= 0.5).float()
+                test_true = dataset['test_label'].to(device)
+                test_accuracy = (test_pred == test_true).float().mean().cpu().detach().numpy()
+
+            results['train_accuracy'].append(train_accuracy)
+            results['test_accuracy'].append(test_accuracy)
+
             if _ % log == 0:
-                pbar.set_description("train loss: %.2e | test loss: %.2e | reg: %.2e " % (torch.sqrt(train_loss).cpu().detach().numpy(), torch.sqrt(test_loss).cpu().detach().numpy(), reg_.cpu().detach().numpy()))
+                pbar.set_description("train loss: %.2e | test loss: %.2e | reg: %.2e | train acc: %.2f%% | test acc: %.2f%%" % 
+                         (torch.sqrt(train_loss).cpu().detach().numpy(), 
+                          torch.sqrt(test_loss).cpu().detach().numpy(), 
+                          reg_.cpu().detach().numpy(),
+                          train_accuracy * 100,
+                          test_accuracy * 100))
 
             if metrics != None:
                 for i in range(len(metrics)):
@@ -1108,7 +1127,7 @@ class KAN(nn.Module):
 
     def auto_symbolic(self, a_range=(-10, 10), b_range=(-10, 10), lib=None, verbose=1):
         '''
-        automatic symbolic regression: using top 1 suggestion from suggest_symbolic to replace splines with symbolic activations
+        automatic symbolic regression: using top 1 suggestion from suggest_symbolic to replace gaussian with symbolic activations
         
         Args:
         -----
